@@ -2,37 +2,22 @@
 
 Como configurar o protocolo LoRa no ESP32 LoRa
 Autor: Paulo S. Abreu
-07-maio-2018
+09-maio-2018
 
-Este programa utiliza tudo o que já foi feito 
-no esp32ntp e acrescenta os comandos necessários
-para se inicializar o protocolo LoRa.
+Este programa ...
+
 
 */
-
-// biblioteca para conexão Wi-Fi
-#include <WiFi.h>
 //biblioteca para comunicação com o display
 #include "SSD1306.h"
-// bibliotecas para usar protocolo ntp
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-#include <TimeLib.h>
-#include <time.h>
 
 // Para usar o protocolo LoRa
-#include <SPI.h>              // o chipset LoRa usa a interface SPI para comunicação
-#include <LoRa.h>
+#include <SPI.h>      // o chipset LoRa usa a interface SPI para comunicação
+#include <LoRa.h>     // biblioteca de funções do LoRa
 
 // construtor do objeto do display
 // parametros: address,SDA,SCL
-// (Documentação da placa WiFi LoRa 32)
 SSD1306 tela(0x3c, 4, 15); 
-
-// ssid e senha da rede Wi-Fi à qual
-// você pretende se conectar.
-const char *ssid     = "";
-const char *password = "";
 
 // Portas usadas pelo chipset SX1278 LoRa
 // Portas do chipset WIFI_LoRa_32
@@ -42,15 +27,14 @@ const char *password = "";
 // GPIO18 — SX1278’s CS
 // GPIO14 — SX1278’s RESET
 // GPIO26 — SX1278’s IRQ(Interrupt Request)
-#define SS 18
-#define RST 14
-#define DI0 26 
-#define BAND 433E6          // frequencia do radio LoRa do chipset
 
-// constantes para LoRa
-const int csPin = SS;       // LoRa radio chip select
-const int resetPin = RST;   // LoRa radio reset
-const int irqPin = DI0;     // hardware interrupt pin
+// frequencia do radio LoRa do chipset
+#define BAND 433E6
+
+// constantes para chipset Wi-Fi LoRa 32
+const int csPin = 18;       // LoRa radio chip select
+const int resetPin = 14;    // LoRa radio reset
+const int irqPin = 26;      // hardware interrupt pin
 
 // variáveis para rotinas LoRa
 String outgoing;              // mensagem a ser enviada
@@ -61,20 +45,11 @@ long lastSendTime = 0;        // horário do último pacote enviado
 int interval = 5000;          // intervalo aproximado entre envio de mensagens
 
 
-
-// Cria uma instância UDP para permitir enviar e receber pacotes UDP
-WiFiUDP ntpUDP;
-int16_t utc = -3; //UTC -3:00 Brazil
-// NTPClient timeClient(ntpUDP, NTP_ADDRESS, NTP_OFFSET, NTP_INTERVAL);
-// define servidor ntp do NIC.br
-NTPClient timeClient(ntpUDP, "a.st1.ntp.br", utc*3600, 60000);
-
 void setup(){
-  pinMode(25, OUTPUT); //Send success, LED will bright 1 second
+  pinMode(25, OUTPUT);    // LED na placa para indicar envio de pacote LoRa
   Serial.begin(115200);   // para debug apenas
-  // Preparação do display
 
-  //configura GPIO16 como saida
+  // Prepara o display OLED
   pinMode(16,OUTPUT);       // GPIO16 como saída
   digitalWrite(16, LOW);    // reseta o OLED
   delay(10);                // aguarda pelo menos 5 ms
@@ -82,63 +57,38 @@ void setup(){
   tela.init();              // inicializa o display
   tela.clear();             // limpa a tela do display
 
-  // Coloca aviso de que vamos tentar nos conectar ao Wi-Fi
-  tela.drawString(0, 0, "Conectando ao Wi-Fi");
-  tela.display();
-
-  // Conexão ao Wi-Fi
-  WiFi.begin(ssid, password);   // inicializa o Wi-Fi
-
-  // aguarda a conexão à rede Wi-Fi
-  // Sai do loop se 60 * 500ms = 30s se passarem sem
-  // que conexão seja estabelecida.
-  int count = 0;
-  while ( WiFi.status() != WL_CONNECTED && count < 60) {
-    delay ( 500 );
-    count++;
-    tela.drawString(count, 10, "o");  // prepara o texto.
-    tela.display();                   // mostra o texto no display.
-  }
-  if (count == 60) {
-    tela.clear();   // apaga o texto que está no display
-    tela.drawString(0, 0, "Falha tentando conectar ao Wi-Fi");
-    tela.display(); // mostra o texto preparado no display
-  } else {
-    tela.clear();   // apaga o texto que está no display
-    tela.drawString(0, 0, "Conectado ao Wi-Fi");
-    // mostra o ssid da rede wifi
-    tela.drawString(0, 10, WiFi.SSID());
-    // mostra o endereço IP recebido
-    tela.drawString(0, 20, WiFi.localIP().toString());
-    tela.display(); // mostra o texto preparado no display
-  }
-
-  // ntp
-  timeClient.begin();
-
   // Inicializa LoRa
   tela.drawString(0, 30, "Inicializando LoRa");
   tela.display();
-  /*
-   *  Veja documentação da biblioteca LoRa.h em 
-   *  https://github.com/sandeepmistry/arduino-LoRa/blob/master/API.md
-   */
-  // override the default CS, reset, and IRQ pins (optional)
-  // Deve ser chamado antes de LoRa.begin()
+  // override the default CS, reset, and IRQ pins
   LoRa.setPins(csPin, resetPin, irqPin);
-  // initializ radio em BAND MHz
-  if (!LoRa.begin(BAND)) {
-    tela.drawString(0, 40, "LoRa falhou.");
+  if (!LoRa.begin(BAND)) {                          // initializ radio em 433 MHz
+    tela.drawString(0, 40, "LoRa falhou. Pânico");
     tela.display();
-    while (true);  // loop infinito.
+    while (true);                                   // loop infinito.
   }
-  tela.drawString(0, 40, "LoRa inicializado.");
+  tela.drawString(0, 40, "LoRa inicializado!");
   tela.display();
+
+  // Agora que o LoRa está inicializado,
+  // pede para o master a hora ntp.
+  //while ( (millis() - lastSendTime > interval)       ) {
+    String message = "gettime";
+    sendMessage(message);  // esta função está definida mais abaixo
+    Serial.println("Sending " + message + "para " + destination);
+    lastSendTime = millis();            // guarda horário do último envio de mensagem
+    interval = random(2000) + 5000;    // 5 a 7 segundos de novo intervalo
+    digitalWrite(25, HIGH); // turn the default LED on GPIO25 (HIGH is the voltage level)
+    delay(200); // espera só um pouquinho
+    digitalWrite(25, LOW); // turn the LED off by making the voltage LOW
+  //}
+
+  
 }
 
 void loop() {
 
-/*
+/* slave não fica mandando pacotes à toa.
   // condição para envio da mensagem LoRa
   if (millis() - lastSendTime > interval) {
     String message = "aLoRa!";
@@ -151,57 +101,23 @@ void loop() {
     digitalWrite(25, LOW); // turn the LED off by making the voltage LOW
   }
 */
+
   // Se receber um pacote LoRa:
   // parse for a packet, and call onReceive with the result:
   // parsePacket: returns the packet size in bytes or 0 if no packet was received.
   String retorno = onReceive(LoRa.parsePacket());
   if (retorno != "0") {
-    Serial.println( "mensagem recebida: " + retorno );
+    Serial.println( "retorno da função: " + retorno );
     Serial.println();
     tela.clear();
     tela.drawString(0, 0, retorno );
     tela.display();
 
-    // Trata cada tipo de mensagem recebida
-    //int dia_da_semana = ((timeClient.getEpochTime() / 86400L) + 4) %7;
-    if (retorno == "gettime") {
-        timeClient.update();
-        time_t tempo_t = timeClient.getEpochTime();
-        setTime(tempo_t);
-        Serial.println(tempo_t);
-        delay(100);
-        Serial.println("tamanho = " + String(sizeof(tempo_t)));
-        
-        String message = "zzz";
-        //strcpy(message, "que merda");
-        //Serial.println(message);
-        //int tamanho = message.length();
-        //char str[tamanho] = 
-        //String *ptr;
-        //long hora = strtol(&message, &ptr, 10);
-        //setTime(hora);
-        //Serial.println(now());
 
 
-/*
-    String str = "2030300 This is test";
-   char *ptr;
-   long ret;
-
-   ret = strtol(str, &ptr, 10);
-   Serial.printf("The number(unsigned long integer) is %ld\n", ret);
-   Serial.printf("String part is |%s|", ptr);
-
-  */      
-        sendMessage(message);  // esta função está definida mais abaixo
-        Serial.println("Sending " + message + "para " + destination);
-        digitalWrite(25, HIGH); // turn the default LED on GPIO25 (HIGH is the voltage level)
-        delay(100); // espera só um pouquinho
-        digitalWrite(25, LOW); // turn the LED off by making the voltage LOW
-    }
     
   } // fim de 'if (retorno != 0)'
-    
+
 } // fim do void loop()
 
 //------------------------
@@ -232,7 +148,7 @@ String onReceive(int packetSize) {        //
   // read packet header bytes:
   // LoRa.read(): Reads the next byte from the packet.                pacote enviado        pacote recebido
   int recipient = LoRa.read();          // recipient address          destination       --> recipient
-  byte sender = LoRa.read();            //  address                   localAddress      --> sender address
+  byte sender = LoRa.read();            //  address             localAddress      --> sender address
   byte incomingMsgId = LoRa.read();     // incoming msg ID            msgCount          --> incomingMsgId
   byte incomingLength = LoRa.read();    // incoming msg length        outgoing.length() --> incomingLength
 
